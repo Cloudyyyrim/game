@@ -30,6 +30,8 @@
 html, body { height: 100%; margin: 0; padding: 0; overscroll-behavior: none; -webkit-text-size-adjust: 100%; }
 body { background: #bfe6ff; color: var(--ink); font-family: var(--body); font-size: 16px; overflow: hidden; }
 #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+/* iPhone home-screen app: the page box is a status bar shorter than the screen, so the canvas is stretched to the real bottom */
+@media (display-mode: standalone) { html:not(.rot) #scene, html:not(.rot) #confetti { bottom: auto; height: calc(100% + env(safe-area-inset-top, 0px)); } }
 #confetti { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; z-index: 8; }
 
 .hud { position: fixed; z-index: 5; left: 0; right: 0; top: 0; display: flex; justify-content: center; pointer-events: none;
@@ -526,7 +528,20 @@ const scene = new THREE.Scene();
 const camera = new THREE.PerspectiveCamera(50, 1, .1, 400);
 $("loading").remove();
 
-function canvasTex(w, h, draw) { const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h); const t = new THREE.CanvasTexture(c); t.anisotropy = 4; return t; }
+/* phones (Safari) only allow a limited amount of canvas memory; once a drawn texture is on the GPU its canvas is shrunk
+   so the textures built later (house, lab) don't come out black. Clones share the canvas, so it is freed after the last one uploads. */
+const TEXREF = new WeakMap();
+function texUploaded(t) { const c = t.image, n = TEXREF.get(c); if (n === undefined) return; if (n <= 1) { TEXREF.delete(c); (t.mipmaps || []).forEach(m => { if (m !== c) m.width = m.height = 1; }); c.width = c.height = 1; } else TEXREF.set(c, n - 1); t.onUpdate = null; }
+{ const oc = THREE.Texture.prototype.clone; THREE.Texture.prototype.clone = function () { const t = oc.call(this); const n = TEXREF.get(this.image); if (n !== undefined) { TEXREF.set(this.image, n + 1); t.onUpdate = texUploaded; } return t; }; }
+// iPhone/iPad Safari can turn GPU-made mipmaps black (big tiled floors, walls and ground went dark), so there the smaller levels are drawn here instead
+const APPLE_TOUCH = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1);
+function cpuMips(c) { const L = [c]; let p = c, w = c.width, h = c.height; while (w > 1 || h > 1) { w = Math.max(1, w >> 1); h = Math.max(1, h >> 1); const n = document.createElement("canvas"); n.width = w; n.height = h; const g = n.getContext("2d"); g.imageSmoothingEnabled = true; g.imageSmoothingQuality = "high"; g.drawImage(p, 0, 0, w, h); L.push(n); p = n; } return L; }
+function canvasTex(w, h, draw, keep) { const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h); let src = c;
+  // phones have far less memory: the biggest drawn textures are stored at half size there (still sharp on a phone screen)
+  if (APPLE_TOUCH && !keep && Math.max(w, h) >= 1024) { const n = document.createElement("canvas"); n.width = w >> 1; n.height = h >> 1; const g = n.getContext("2d"); g.imageSmoothingQuality = "high"; g.drawImage(c, 0, 0, n.width, n.height); c.width = c.height = 1; src = n; }
+  const t = new THREE.CanvasTexture(src); t.anisotropy = APPLE_TOUCH ? 1 : 4;
+  if (APPLE_TOUCH && !keep) { t.mipmaps = cpuMips(src); t.generateMipmaps = false; }
+  if (!keep && w * h >= 128 * 128) { TEXREF.set(src, 1); t.onUpdate = texUploaded; } return t; }
 const glowTex = canvasTex(128, 128, (g) => { const r = g.createRadialGradient(64, 64, 0, 64, 64, 64); r.addColorStop(0, "rgba(255,255,255,1)"); r.addColorStop(.25, "rgba(255,255,255,.6)"); r.addColorStop(.6, "rgba(255,255,255,.14)"); r.addColorStop(1, "rgba(255,255,255,0)"); g.fillStyle = r; g.fillRect(0, 0, 128, 128); });
 function glow(color, size, opacity = 1) {
   const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color, transparent: true, opacity, depthWrite: false, blending: THREE.AdditiveBlending }));
@@ -1508,7 +1523,7 @@ const SKIN = [0, (913 - 300) * K];
 /* ---- her outfit: a fitted lilac hoodie with her black cat, a cream pleated skirt, socks and sneakers ---- */
 const LILAC = 0xf2f0ec, LILAC_DK = 0xe2dfda, CREAM = 0xf6ece0, SKIN_HEX = 0xfcdccd;
 const cloth = (hex, map, extra = {}) => { const c = new THREE.Color(hex); return new THREE.MeshStandardMaterial(Object.assign({ color: c.clone().multiplyScalar(.8), emissive: c.clone().multiplyScalar(.3), map: map || null, emissiveMap: map || null, roughness: .95, metalness: 0 }, extra)); };
-const texCanvas = (w, h, draw) => { const t = canvasTex(w, h, draw); t.anisotropy = 8; return t; };
+const texCanvas = (w, h, draw) => { const t = canvasTex(w, h, draw, true); t.anisotropy = APPLE_TOUCH ? 1 : 8; return t; };
 const catImg = new Image();
 const hoodieTex = texCanvas(1024, 1024, () => {});
 // thick cables (braids) running down the sweater, with a purl groove on each side
@@ -6032,7 +6047,7 @@ function meadowMagic(dt) { if (!MAGIC || MAGIC.t < 0) return; MAGIC.t += dt; con
   if (t > 4 && t < 26) { const k = (t - 4) / 22; MAGIC.birds.forEach(b => { const u = b.userData; b.position.set(-90 + k * 180 + u.ox, 20 + u.oz * .2, -30 + u.oz); b.rotation.y = Math.PI / 2; flapBird(b, clock * 8 + u.ox, false); b.visible = true; }); } else MAGIC.birds.forEach(b => b.visible = false); }
 function confetti() { return;   // no falling confetti any more
   if (reduced) return;
-  const d = devicePixelRatio || 1; cf.width = innerWidth * d; cf.height = innerHeight * d; cfx.setTransform(d, 0, 0, d, 0, 0);
+  const d = Math.min(devicePixelRatio || 1, 2); cf.width = innerWidth * d; cf.height = innerHeight * d; cfx.setTransform(d, 0, 0, d, 0, 0);
   const cols = ["#ff7fae", "#ffc94d", "#9ee88a", "#7fd0ff", "#c6a8ff"];
   for (let i = 0; i < 150; i++) bits.push({ x: Math.random() * innerWidth, y: -20 - Math.random() * innerHeight * .6, vx: rand(-30, 30), vy: rand(120, 280), r: Math.random() * 6, s: rand(5, 10), c: cols[i % 5] });
 }
@@ -6044,7 +6059,7 @@ function drawConfetti(dt) {
 
 /* ---------- Loop ---------- */
 // landscape on a phone that won't rotate the page itself: the whole game is turned 90 degrees, touches are turned back
-let ROT = 0; const vpW = () => ROT ? innerHeight : innerWidth, vpH = () => ROT ? innerWidth : innerHeight;
+let ROT = 0; const vpW = () => ROT ? innerHeight : innerWidth, vpH = () => ROT ? innerWidth : Math.max(innerHeight, document.getElementById("scene").clientHeight || 0);
 const cX = e => ROT === 1 ? e.clientY : ROT === -1 ? innerHeight - e.clientY : e.clientX, cY = e => ROT === 1 ? innerWidth - e.clientX : ROT === -1 ? e.clientX : e.clientY;
 function setRot(on) { ROT = on === true ? 1 : on || 0; document.documentElement.classList.toggle("rot", !!ROT); document.documentElement.classList.toggle("rotl", ROT === -1); document.documentElement.style.setProperty("--W", innerWidth + "px"); document.documentElement.style.setProperty("--H", innerHeight + "px"); $("rotBtn").setAttribute("aria-pressed", String(on)); resize(); }
 function resize() { if (ROT && innerWidth > innerHeight) { ROT = 0; document.documentElement.classList.remove("rot", "rotl"); } if (ROT) { document.documentElement.style.setProperty("--W", innerWidth + "px"); document.documentElement.style.setProperty("--H", innerHeight + "px"); }
