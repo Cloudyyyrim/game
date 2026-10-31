@@ -5613,6 +5613,12 @@ function startGame() {
   if (travelUnlocked) $("travelBtn").hidden = false;
 }
 $("startBtn").onclick = startGame;
+/* Android/desktop browsers: go fullscreen on the first tap so the browser bar disappears (iPhone uses "Add to Home Screen") */
+function goFull() { try { const d = document.documentElement, inApp = window.claude && window.claude.use;
+    if (inApp || document.fullscreenElement || document.webkitFullscreenElement || matchMedia("(display-mode: standalone), (display-mode: fullscreen)").matches) return;
+    if (!matchMedia("(pointer: coarse)").matches) return;
+    const r = d.requestFullscreen || d.webkitRequestFullscreen; if (r) { const pr = r.call(d, { navigationUI: "hide" }); if (pr && pr.catch) pr.catch(() => {}); } } catch (e) {} }
+addEventListener("pointerdown", goFull, { capture: true });
 // after she has finished the whole game, the story messages can be skipped when she replays a world
 [["letterScreen", "walkBtn"], ["questScreen", "questBtn"], ["labScreen", "labBtn"], ["labNoteScreen", "labNoteBtn"]].forEach(([sid, bid]) => { const sc = $(sid); if (!sc) return; const card = sc.querySelector(".card, .paper"); if (!card) return;
   const b = document.createElement("button"); b.type = "button"; b.className = "skipmsg"; b.textContent = "Skip \u203A"; card.appendChild(b);
