@@ -5643,7 +5643,7 @@ if (kitty.parent) kitty.parent.remove(kitty);   // no cat in the meadow any more
 { const h = document.querySelector(".intro-title"); let i = 0; [...h.childNodes].forEach(nd => { if (nd.nodeType !== 3) return; const f = document.createDocumentFragment(); [...nd.textContent].forEach(ch => { const sp = document.createElement("span"); sp.className = "ch"; sp.textContent = ch; sp.style.setProperty("--i", i++); f.appendChild(sp); }); nd.replaceWith(f); }); }
 let introFrames = 0;
 // turning the phone sideways turns the game with it (the phone's motion sensor tells which way it is held)
-{ const ios = /iPhone|iPad|iPod/.test(navigator.userAgent), flip = ios ? 1 : -1; let want = 0, since = 0;
+{ const ios = /iPhone|iPad|iPod/.test(navigator.userAgent) || (/Macintosh/.test(navigator.userAgent) && navigator.maxTouchPoints > 1), flip = ios ? -1 : 1;   // iPhones report the sensor with the opposite sign let want = 0, since = 0;
   const onMotion = e => { const g = e.accelerationIncludingGravity; if (!g || g.x == null) return; if (innerWidth > innerHeight) { if (ROT) setRot(0); return; }
     const x = g.x * flip, y = g.y * flip, d = Math.abs(x) > 6.5 && Math.abs(x) > Math.abs(y) * 1.4 ? (x > 0 ? 1 : -1) : Math.abs(y) > 6.5 ? 0 : null; if (d === null) return;
     const now = performance.now(); if (d !== want) { want = d; since = now; } else if (d !== ROT && now - since > 450) setRot(d); };
